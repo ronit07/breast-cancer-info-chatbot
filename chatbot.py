@@ -9,14 +9,15 @@ Pipeline
   5. Answer with the best sentences from the top chunk(s) and cite the NCI page.
      Optional: if ANTHROPIC_API_KEY is set, Claude writes the answer from the same chunks.
 """
-import os, re, glob
-import numpy as np
-from sklearn.feature_extraction.text import TfidfVectorizer
+import os, re, glob, math
+from collections import Counter
 from rank_bm25 import BM25Okapi
 
+# Common English words ignored by search (same list scikit-learn uses, copied so the app stays small).
+STOP_WORDS = frozenset("""a about above across after afterwards again against all almost alone along already also although always am among amongst amoungst amount an and another any anyhow anyone anything anyway anywhere are around as at back be became because become becomes becoming been before beforehand behind being below beside besides between beyond bill both bottom but by call can cannot cant co con could couldnt cry de describe detail do done down due during each eg eight either eleven else elsewhere empty enough etc even ever every everyone everything everywhere except few fifteen fifty fill find fire first five for former formerly forty found four from front full further get give go had has hasnt have he hence her here hereafter hereby herein hereupon hers herself him himself his how however hundred i ie if in inc indeed interest into is it its itself keep last latter latterly least less ltd made many may me meanwhile might mill mine more moreover most mostly move much must my myself name namely neither never nevertheless next nine no nobody none noone nor not nothing now nowhere of off often on once one only onto or other others otherwise our ours ourselves out over own part per perhaps please put rather re same see seem seemed seeming seems serious several she should show side since sincere six sixty so some somehow someone something sometime sometimes somewhere still such system take ten than that the their them themselves then thence there thereafter thereby therefore therein thereupon these they thick thin third this those though three through throughout thru thus to together too top toward towards twelve twenty two un under until up upon us very via was we well were what whatever when whence whenever where whereafter whereas whereby wherein whereupon wherever whether which while whither who whoever whole whom whose why will with within without would yet you your yours yourself yourselves""".split())
+ENGLISH_STOP = STOP_WORDS
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 MIN_SCORE = 0.08
-from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS as ENGLISH_STOP
 DISCLAIMER = ("General information from National Cancer Institute pages. "
               "Not medical advice; please talk with your doctor about your situation.")
 
@@ -73,13 +74,36 @@ def load_chunks(data_dir=DATA_DIR):
     return chunks
 
 
+class TfIdf:
+    """Small TF-IDF index (unigrams + bigrams, log-scaled term counts, cosine similarity)."""
+
+    def __init__(self, docs):
+        grams = [self._grams(d) for d in docs]
+        df = Counter(g for gs in grams for g in set(gs))
+        n = len(docs)
+        self.idf = {g: math.log((1 + n) / (1 + c)) + 1 for g, c in df.items()}
+        self.vectors = [self._weigh(gs) for gs in grams]
+
+    @staticmethod
+    def _grams(text):
+        toks = tokens(text)
+        return toks + [a + " " + b for a, b in zip(toks, toks[1:])]
+
+    def _weigh(self, grams):
+        w = {g: (1 + math.log(c)) * self.idf[g] for g, c in Counter(grams).items() if g in self.idf}
+        norm = math.sqrt(sum(v * v for v in w.values())) or 1.0
+        return {g: v / norm for g, v in w.items()}
+
+    def scores(self, text):
+        q = self._weigh(self._grams(text))
+        return [sum(v * d.get(g, 0.0) for g, v in q.items()) for d in self.vectors]
+
+
 class Bot:
     def __init__(self, chunks=None):
         self.chunks = chunks or load_chunks()
         docs = [f"{c['heading']}. {c['heading']}. {c['text']}" for c in self.chunks]
-        self.vec = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True,
-                                   token_pattern=r"(?u)\b\w+\b", preprocessor=stem_text)
-        self.matrix = self.vec.fit_transform(docs)
+        self.tfidf = TfIdf(docs)
         self.bm25 = BM25Okapi([tokens(d) for d in docs])
         self.sents = [(s, c, pos) for c in self.chunks
                       for pos, s in enumerate(re.split(r"(?<=[.!?])\s+", c["text"])) if len(s) > 15]
@@ -87,18 +111,18 @@ class Bot:
 
     def retrieve(self, question, k=3):
         q = expand(question)
-        tfidf = (self.matrix @ self.vec.transform([q]).T).toarray().ravel()
-        bm = self.bm25.get_scores(tokens(q))
-        fused = np.zeros(len(self.chunks))
+        tfidf = self.tfidf.scores(q)
+        bm = list(self.bm25.get_scores(tokens(q)))
+        fused = [0.0] * len(self.chunks)
         for scores in (tfidf, bm):
-            for rank, i in enumerate(np.argsort(-scores)):
+            for rank, i in enumerate(sorted(range(len(scores)), key=lambda j: -scores[j])):
                 fused[i] += 1.0 / (60 + rank)
         if re.search(r"\bhow (often|frequent\w*)\b|\bevery how\b", question, re.I):  # schedule questions
             for i, c in enumerate(self.chunks):
                 if re.search(r"\bevery\b.*\byears?\b", c["text"]):
                     fused[i] += 0.03
-        top = np.argsort(-fused)[:k]
-        self.best_tfidf = float(tfidf.max())
+        top = sorted(range(len(fused)), key=lambda j: -fused[j])[:k]
+        self.best_tfidf = float(max(tfidf))
         return [(self.chunks[i], float(tfidf[i])) for i in top]
 
     def _pick(self, question, hits, n=3):
