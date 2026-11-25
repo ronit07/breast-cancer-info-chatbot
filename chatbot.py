@@ -93,6 +93,10 @@ class Bot:
         for scores in (tfidf, bm):
             for rank, i in enumerate(np.argsort(-scores)):
                 fused[i] += 1.0 / (60 + rank)
+        if re.search(r"\bhow (often|frequent\w*)\b|\bevery how\b", question, re.I):  # schedule questions
+            for i, c in enumerate(self.chunks):
+                if re.search(r"\bevery\b.*\byears?\b", c["text"]):
+                    fused[i] += 0.03
         top = np.argsort(-fused)[:k]
         self.best_tfidf = float(tfidf.max())
         return [(self.chunks[i], float(tfidf[i])) for i in top]
@@ -113,7 +117,13 @@ class Bot:
         return [(s, ch) for _, _, _, s, ch in sorted(best, key=lambda x: (x[1], x[2]))]
 
     def _extractive(self, question, hits):
-        return " ".join(s for s, _ in self._pick(question, hits))
+        """Answer from ONE section (the best match), never mixing text from different sections.
+        Short sections are returned whole; long ones are trimmed to their most relevant sentences."""
+        chunk = hits[0][0]
+        if len(chunk["text"]) <= 900:
+            return chunk["text"]
+        picked = self._pick(question, [(chunk, hits[0][1])], n=4)
+        return " ".join(s for s, _ in picked) or chunk["text"][:900]
 
     def _llm(self, question, hits):
         import anthropic
@@ -157,7 +167,7 @@ class Bot:
             answer = ("I can't give personal medical advice. NCI says to contact your doctor if you notice "
                       "any changes in your breasts. Here is the general information: ") + answer
         seen, sources = set(), []
-        used = [c for _, c in self._pick(search_q, hits)] or [c for c, _ in hits[:1]]
+        used = [hits[0][0]]
         if PERSONAL.search(question) and hits[0][0]["heading"] == "When to see a doctor":
             used = [hits[0][0]] + used
         for c in used:
