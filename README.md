@@ -2,6 +2,8 @@
 
 A chatbot that answers questions about breast cancer using seven National Cancer Institute (cancer.gov)
 pages, shows which page each answer came from, and says so when it cannot answer.
+Live demo: https://breast-cancer-info-chatbot.vercel.app
+
 Built Nov 2026 as a learning project. It gives general information, not medical advice.
 
 ## Run it
