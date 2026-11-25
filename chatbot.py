@@ -21,7 +21,7 @@ DISCLAIMER = ("General information from National Cancer Institute pages. "
               "Not medical advice; please talk with your doctor about your situation.")
 
 SYNONYMS = {
-    "mammogram": "mammography screening x-ray", "mammography": "mammogram screening x-ray",
+    "mammogram": "mammography", "mammography": "mammogram",
     "chemo": "chemotherapy", "tnbc": "triple negative", "mri": "magnetic resonance imaging",
     "gene": "BRCA genetic inherited", "genetic": "BRCA gene inherited", "hereditary": "inherited BRCA",
     "lump": "lump breast change", "dense": "density", "risk": "chance probability lifetime",
@@ -29,18 +29,32 @@ SYNONYMS = {
     "biopsy": "biopsy suspicious BI-RADS", "result": "report BI-RADS", "results": "report BI-RADS",
     "harm": "harms false-positive overdiagnosis", "downside": "harms false-positive overdiagnosis",
     "cancerous": "benign noncancerous cancer", "noncancerous": "benign",
+    "triple": "ER PR HER2 negative subtype receptor", "child": "children under 18", "children": "under 18 child",
+    "kid": "children under 18", "often": "every years", "frequently": "every years", "start": "age ages starting",
+    "painful": "pain hurt compression", "hurt": "pain compression", "cost": "insurance", "radiation": "radiation dose x-ray",
 }
 EMERGENCY = re.compile(r"\b(chest pain|can'?t breathe|trouble breathing|suicid|want to die|overdose|heavy bleeding)\b", re.I)
 PERSONAL = re.compile(r"\b(i (found|feel|have|noticed)|my (breast|nipple|mammogram|result|doctor)|lump in my|am i at risk|do i have)\b", re.I)
 FOLLOWUP = re.compile(r"^(and|what about|how about|what if|why|then|is it|does it|can it)\b|\b(it|that|this|they|those)\b", re.I)
 
 
+def stem(w):
+    for suf in ("ing", "ed", "es", "ly", "s"):
+        if len(w) > len(suf) + 3 and w.endswith(suf):
+            return w[: -len(suf)]
+    return w
+
+
 def tokens(text):
-    return re.findall(r"[a-z0-9]+", text.lower())
+    return [stem(w) for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in ENGLISH_STOP]
+
+
+def stem_text(text):
+    return " ".join(tokens(text))
 
 
 def expand(q):
-    extra = [SYNONYMS[w] for w in tokens(q) if w in SYNONYMS]
+    extra = [SYNONYMS[w] for w in re.findall(r"[a-z0-9]+", q.lower()) if w in SYNONYMS]
     if re.search(r"\b(at|age|aged|turn(ed|ing)?|over|under)\s*(age\s*)?\d{2}\b|\b\d{2}s?\s*(years|yrs|year old)", q, re.I):
         extra.append("age ages starting recommended every years")
     return q + " " + q + " " + " ".join(extra)
@@ -63,10 +77,13 @@ class Bot:
     def __init__(self, chunks=None):
         self.chunks = chunks or load_chunks()
         docs = [f"{c['heading']}. {c['heading']}. {c['text']}" for c in self.chunks]
-        self.vec = TfidfVectorizer(stop_words="english", ngram_range=(1, 2), sublinear_tf=True,
-                                   token_pattern=r"(?u)\b\w+\b")
+        self.vec = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True,
+                                   token_pattern=r"(?u)\b\w+\b", preprocessor=stem_text)
         self.matrix = self.vec.fit_transform(docs)
         self.bm25 = BM25Okapi([tokens(d) for d in docs])
+        self.sents = [(s, c, pos) for c in self.chunks
+                      for pos, s in enumerate(re.split(r"(?<=[.!?])\s+", c["text"])) if len(s) > 15]
+        self.sent_bm25 = BM25Okapi([tokens(s) for s, _, _ in self.sents])
 
     def retrieve(self, question, k=3):
         q = expand(question)
@@ -81,17 +98,19 @@ class Bot:
         return [(self.chunks[i], float(tfidf[i])) for i in top]
 
     def _pick(self, question, hits, n=3):
-        """Score every sentence in the top chunks; keep the best few, in reading order."""
-        qv = self.vec.transform([question + " " + question])  # original wording: rare words matter most
+        """BM25 over single sentences (rare words count most). Sentences from the top-ranked
+        chunks get a small boost; the best few are shown in reading order."""
+        scores = self.sent_bm25.get_scores(tokens(expand(question)))
+        top_ids = {id(c): r for r, (c, _) in enumerate(hits[:3])}
         cand = []
-        hits = [h for h in hits if h[1] >= 0.6 * hits[0][1]]  # ignore weakly related chunks
-        for rank, (chunk, _) in enumerate(hits):
-            for pos, s in enumerate(re.split(r"(?<=[.!?])\s+", chunk["text"])):
-                if len(s) > 15:
-                    sc = float((self.vec.transform([s]) @ qv.T).toarray()[0, 0])
-                    cand.append((sc - 0.01 * rank, rank, pos, s, chunk))
-        best = sorted([c for c in cand if c[0] > 0], key=lambda x: -x[0])[:n]
-        return [(s, chunk) for _, _, _, s, chunk in sorted(best, key=lambda x: (x[1], x[2]))]
+        for i, (s, ch, pos) in enumerate(self.sents):
+            if scores[i] > 0:
+                boost = 1.0 + (0.25 if id(ch) in top_ids else 0.0)
+                cand.append((scores[i] * boost, self.chunks.index(ch), pos, s, ch))
+        best = sorted(cand, key=lambda x: -x[0])[:n]
+        if best:  # drop weak extras: keep sentences scoring at least 60% of the best one
+            best = [b for b in best if b[0] >= 0.6 * best[0][0]]
+        return [(s, ch) for _, _, _, s, ch in sorted(best, key=lambda x: (x[1], x[2]))]
 
     def _extractive(self, question, hits):
         return " ".join(s for s, _ in self._pick(question, hits))
@@ -116,8 +135,10 @@ class Bot:
             search_q = history[-1] + " " + question  # follow-up: reuse the last question's topic
         hits = self.retrieve(search_q, k)
         known = {w for w in tokens(" ".join(c["text"] + " " + c["heading"] for c in self.chunks))}
-        content = [w for w in tokens(search_q) if w not in ENGLISH_STOP and len(w) > 2]
-        if self.best_tfidf < MIN_SCORE or not any(w in known for w in content):
+        content = [w for w in tokens(search_q) if len(w) > 2]
+        known_chars = sum(len(w) for w in content if w in known)
+        coverage = known_chars / max(1, sum(len(w) for w in content))  # how much of the question the pages know
+        if self.best_tfidf < MIN_SCORE or coverage < 0.5:
             return {"answer": "I couldn't find that in the NCI pages I have. I only cover breast "
                               "cancer screening, mammograms, risk, BRCA genes, treatment types, receptor "
                               "testing and breast changes. For anything else, please ask a doctor.",
@@ -129,11 +150,16 @@ class Bot:
                 answer, mode = self._extractive(search_q, hits), "extractive"
         except Exception as e:
             answer, mode = self._extractive(search_q, hits), "extractive"
+        if PERSONAL.search(question) and re.search(r"lump|nipple|discharge|pain|swell|change|dimpl", question, re.I):
+            bc = next(c for c in self.chunks if c["heading"] == "When to see a doctor")
+            hits = [(bc, 1.0)] + [h for h in hits if h[0] is not bc]
         if PERSONAL.search(question):
             answer = ("I can't give personal medical advice. NCI says to contact your doctor if you notice "
                       "any changes in your breasts. Here is the general information: ") + answer
         seen, sources = set(), []
         used = [c for _, c in self._pick(search_q, hits)] or [c for c, _ in hits[:1]]
+        if PERSONAL.search(question) and hits[0][0]["heading"] == "When to see a doctor":
+            used = [hits[0][0]] + used
         for c in used:
             if c["url"] not in seen:
                 seen.add(c["url"]); sources.append({"title": f"{c['title']}: {c['heading']}", "url": c["url"]})
