@@ -32,6 +32,7 @@ SYNONYMS = {
     "cancerous": "benign noncancerous cancer", "noncancerous": "benign",
     "triple": "ER PR HER2 negative subtype receptor", "child": "children under 18", "children": "under 18 child",
     "kid": "children under 18", "often": "every years", "frequently": "every years", "start": "age ages starting",
+    "mutation": "BRCA gene change harmful inherited", "mutations": "BRCA gene change harmful inherited", "variant": "BRCA gene change harmful inherited",
     "painful": "pain hurt compression", "hurt": "pain compression", "cost": "insurance", "radiation": "radiation dose x-ray",
 }
 EMERGENCY = re.compile(r"\b(chest pain|can'?t breathe|trouble breathing|suicid|want to die|overdose|heavy bleeding)\b", re.I)
