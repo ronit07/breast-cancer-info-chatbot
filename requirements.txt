@@ -1,0 +1,4 @@
+scikit-learn
+numpy
+rank_bm25
+anthropic  # optional, only for the Claude answer mode
