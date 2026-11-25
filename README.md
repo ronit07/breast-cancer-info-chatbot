@@ -30,18 +30,23 @@ no settings needed). Search uses only `numpy` and `rank_bm25`, so it stays small
 5. **Safety**: emergency wording gets an emergency message; personal questions (for example "I found a lump")
    get a note to contact a doctor; questions the pages do not cover are declined, not guessed.
 6. **Follow-ups**: short follow-up questions ("What about at 50?") reuse the previous question's topic.
+7. **Conversation layer**: greetings, thanks, "who are you?", feelings ("I'm scared"), news of a diagnosis and
+   symptom statements get a direct reply instead of a page search. Topics the notes don't cover (for example side
+   effects or diet) get an honest "my pages don't cover that" and a pointer to the care team and NCI's Cancer
+   Information Service. This is rule-based, so it feels less flexible than a large language model.
 
 ## Test results (`eval.py`, 32 questions)
 - Right NCI page in the top 3 results: 32/32
-- Key fact present in the answer: 31/32
+- Key fact present in the answer: 32/32
 - Follow-up questions routed correctly: 3/3; off-topic questions declined: 5/5
-- Emergency and personal-question handling: 1/1 each
+- Chat behavior (greeting, support, scope checks): 11/11; emergency and personal-question handling: 1/1 each
 
-The questions were written by the builder from the same pages, so these numbers are a sanity check, not
-proof the bot is reliable on real users' questions.
+The questions were written by the builder from the same pages, and the code was tuned against them, so these
+numbers are a sanity check, not proof the bot is reliable on real users' questions. A separate set of 18 new
+questions found three more bugs (greeting, diagnosis and symptom handling), which were then fixed.
 
 ## Limitations
 - Seven pages only, kept as condensed notes (paraphrased, not verbatim).
 - Answers are whole sections of the notes, so they can be longer than needed. Search matches words, not meaning, so answers to personal or oddly worded questions can be off, and
-  extractive answers can read choppily. Embedding search and an LLM answer step are the next upgrades.
+  extractive answers can read choppily. Embedding search and an LLM answer step are the next upgrades. It does not hold a free-flowing conversation like a large language model: replies come from fixed notes and rules.
 - Not a diagnostic tool. Always talk with a doctor.

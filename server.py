@@ -14,6 +14,9 @@ main{max-width:760px;margin:0 auto;padding:16px}
 #log{min-height:50vh;display:flex;flex-direction:column;gap:12px;padding-bottom:12px}
 .msg{padding:12px 14px;border-radius:12px;max-width:88%;line-height:1.5;font-size:15px;white-space:pre-wrap}
 .me{align-self:flex-end;background:#7a2e5b;color:#fff}.bot{align-self:flex-start;background:#fff;border:1px solid #e3dde6}
+.typing{align-self:flex-start;background:#fff;border:1px solid #e3dde6;border-radius:12px;padding:12px 16px;display:flex;gap:5px}
+.typing i{width:7px;height:7px;background:#b9a9c2;border-radius:50%;animation:b 1s infinite}.typing i:nth-child(2){animation-delay:.15s}.typing i:nth-child(3){animation-delay:.3s}
+@keyframes b{0%,60%,100%{transform:translateY(0);opacity:.5}30%{transform:translateY(-4px);opacity:1}}
 .src{display:block;margin-top:8px;font-size:12px;color:#555}.src a{color:#7a2e5b}
 form{display:flex;gap:8px;position:sticky;bottom:0;background:#f6f4f7;padding:10px 0}
 input{flex:1;padding:12px;border:1px solid #cfc6d3;border-radius:10px;font-size:15px}
@@ -32,8 +35,11 @@ ex.forEach(t=>{const b=document.createElement('button');b.type='button';b.textCo
 function add(cls,text,sources){const d=document.createElement('div');d.className='msg '+cls;d.textContent=text;
  (sources||[]).forEach(s=>{const a=document.createElement('span');a.className='src';a.innerHTML='Source: <a target="_blank" rel="noopener"></a>';
   const l=a.querySelector('a');l.href=s.url;l.textContent=s.title;d.appendChild(a)});log.appendChild(d);d.scrollIntoView()}
-async function send(t){add('me',t);const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t,history:hist})});
- const j=await r.json();hist.push(t);add('bot',j.answer,j.sources)}
+add('bot',"Hi! I answer questions about breast cancer using National Cancer Institute pages and show you the page each answer came from. I'm an automated assistant, not a person, and I can't give personal medical advice. What would you like to know?");
+async function send(t){add('me',t);const ty=document.createElement('div');ty.className='typing';ty.innerHTML='<i></i><i></i><i></i>';log.appendChild(ty);ty.scrollIntoView();
+ try{const r=await fetch('/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({q:t,history:hist})});
+ const j=await r.json();await new Promise(z=>setTimeout(z,350));ty.remove();hist.push(t);add('bot',j.answer,j.sources)}
+ catch(e){ty.remove();add('bot','Sorry, something went wrong. Please try again.')}}
 document.getElementById('f').onsubmit=e=>{e.preventDefault();const i=document.getElementById('q');const t=i.value.trim();if(t){i.value='';send(t)}};
 </script></body></html>"""
 

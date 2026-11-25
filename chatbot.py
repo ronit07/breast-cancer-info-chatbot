@@ -26,13 +26,18 @@ SYNONYMS = {
     "chemo": "chemotherapy", "tnbc": "triple negative", "mri": "magnetic resonance imaging",
     "gene": "BRCA genetic inherited", "genetic": "BRCA gene inherited", "hereditary": "inherited BRCA",
     "lump": "lump breast change", "dense": "density", "risk": "chance probability lifetime",
-    "chance": "risk probability", "odds": "risk probability", "tamoxifen": "hormone therapy risk-reducing",
+    "chance": "risk probability", "odds": "risk probability", "tamoxifen": "hormone therapy recurrence",
     "biopsy": "biopsy suspicious BI-RADS", "result": "report BI-RADS", "results": "report BI-RADS",
-    "harm": "harms false-positive overdiagnosis", "downside": "harms false-positive overdiagnosis",
+    "harm": "harms false-positive overdiagnosis", "downside": "harms false-positive overdiagnosis", "downsides": "harms false-positive overdiagnosis",
     "cancerous": "benign noncancerous cancer", "noncancerous": "benign",
     "triple": "ER PR HER2 negative subtype receptor", "child": "children under 18", "children": "under 18 child",
     "kid": "children under 18", "often": "every years", "frequently": "every years", "start": "age ages starting",
     "mutation": "BRCA gene change harmful inherited", "mutations": "BRCA gene change harmful inherited", "variant": "BRCA gene change harmful inherited",
+    "treat": "treatment therapy surgery systemic", "treated": "treatment therapy surgery systemic",
+    "treatments": "treatment therapy systemic", "therapy": "treatment systemic", "surgery": "lumpectomy mastectomy local treatment",
+    "chemotherapy": "systemic treatments drugs chemotherapy", "her2": "HER2 receptor testing positive negative",
+    "hereditary": "inherited BRCA gene change", "inherited": "BRCA gene change harmful inherited",
+    "family": "inherited BRCA gene change", "men": "men male BRCA", "man": "men male BRCA", "male": "men male BRCA",
     "painful": "pain hurt compression", "hurt": "pain compression", "cost": "insurance", "radiation": "radiation dose x-ray",
 }
 EMERGENCY = re.compile(r"\b(chest pain|can'?t breathe|trouble breathing|suicid|want to die|overdose|heavy bleeding)\b", re.I)
@@ -60,6 +65,9 @@ def expand(q):
     if re.search(r"\b(at|age|aged|turn(ed|ing)?|over|under)\s*(age\s*)?\d{2}\b|\b\d{2}s?\s*(years|yrs|year old)", q, re.I):
         extra.append("age ages starting recommended every years")
     return q + " " + q + " " + " ".join(extra)
+
+
+NEUTRAL = set(tokens('explain tell mean means define describe difference between work works much many long happen happens kind types type example about category categories woman person people someone patient average matter matters should'))
 
 
 def load_chunks(data_dir=DATA_DIR):
@@ -100,6 +108,63 @@ class TfIdf:
         return [sum(v * d.get(g, 0.0) for g, v in q.items()) for d in self.vectors]
 
 
+# ---- Conversation layer: small talk, feelings and diagnosis news are answered before any search ----
+HELP_TOPICS = ("screening and mammograms, how mammogram results (BI-RADS) are reported, breast cancer risk, "
+               "BRCA genes and genetic testing, treatment types, ER/PR/HER2 testing and subtypes, and common benign breast changes")
+CIS = "NCI's Cancer Information Service (1-800-4-CANCER, 1-800-422-6237, or cancer.gov/contact) can talk with you"
+GREETING = re.compile(r"^\s*((hi+|hello+|hey+|hiya|yo|sup|howdy)( there| bot| everyone)?|good (morning|afternoon|evening))[\s!.,]*$", re.I)
+THANKS = re.compile(r"^\s*(thanks|thank you|thx|ty|appreciate it|cheers)\b", re.I)
+ACK = re.compile(r"^\s*(ok(ay)?|cool|got it|alright|i see|nice|great|makes sense|sure|hmm+|oh)[\s!.]*$", re.I)
+BYE = re.compile(r"^\s*(bye|goodbye|see ya|see you|that'?s all|no thanks?|nope)\b", re.I)
+WHO = re.compile(r"\b(who|what) are you\b|\bare you (a |an )?(real|human|person|bot|ai|robot|chatbot|claude|chatgpt)\b|"
+                 r"\bwhat can you (do|help)|\bhow do(es)? (this|you) work\b|\b(help|capabilities)\s*$|\bwho (made|built|created) you\b", re.I)
+FEELING = re.compile(r"\b(i'?m|i am|im|feel(ing)?|feeling|so|really)\s+(so |really |very )?(scared|afraid|terrified|worried|anxious|nervous|stressed|overwhelmed|sad|upset|freaking out|devastated|lost)\b|\bscared\b|\bterrified\b", re.I)
+DIAGNOSED = re.compile(r"\bdiagnos(ed|is)\b|\bfound out\b.{0,30}\bcancer\b", re.I)
+OUT_OF_NOTES = re.compile(r"\b(side effects?|hair loss|nausea|recover(y|ing)|diet|foods?|eat(ing)?|exercise|alcohol|coffee|supplements?|vitamins?|survival|prognosis|life expectancy|stage (0|i{1,3}v?|iv|\\d))\b", re.I)
+SYMPTOM = re.compile(r"\b(i|i've|i have|i found|i noticed|my)\b.{0,40}\b(lump|bump|discharge|dimpl\w*|swelling|swollen|nipple|sore breast|pain in my breast|rash on my breast)\b|\bwhat (does|do|is) (a |the )?(lump|bump|nipple discharge)\b", re.I)
+OFFFUN = re.compile(r"\b(joke|poem|song|story|riddle|weather|news|recipe|movie|sports?|stock|bitcoin|homework|write (me )?(a|an)|translate)\b", re.I)
+
+
+def chat_reply(question, history):
+    """Return (answer, sources, mode) for non-search messages, or None to fall through to search."""
+    q = question.strip()
+    if GREETING.match(q):
+        return ("Hi! I'm a small chatbot that answers questions about breast cancer using seven National Cancer "
+                "Institute pages, and I show the page each answer came from. You can ask me about " + HELP_TOPICS +
+                ". What would you like to know?"), [], "chat"
+    if THANKS.match(q):
+        return "You're welcome! Ask me anything else about breast cancer information, or talk with your doctor about your own situation.", [], "chat"
+    if BYE.match(q):
+        return "Take care. If you have more questions later, I'm here. For anything about your own health, your care team is the best place to start.", [], "chat"
+    if ACK.match(q):
+        return "Glad that helped. What else would you like to know?", [], "chat"
+    if WHO.search(q):
+        return ("I'm an automated assistant, not a person. I search seven National Cancer Institute pages and "
+                "answer from them, and I decline questions they don't cover instead of guessing. I can help with " +
+                HELP_TOPICS + ". I can't give personal medical advice or diagnose anything."), [], "chat"
+    if DIAGNOSED.search(q) and not re.search(r"\b(how|what|which|when|who|can|do|does|is|are)\b.*\?", q, re.I) or \
+       re.search(r"\b(mom|mother|dad|father|sister|brother|wife|friend|aunt|grandma|grandmother|someone close)\b.*\b(diagnosed|has breast cancer|got breast cancer)\b|\bi (was|got|have been) diagnosed\b|\bi have breast cancer\b", q, re.I):
+        return ("I'm so sorry. That's a lot to take in, and wanting to understand more is a normal way to cope. "
+                "I can't speak to anyone's specific situation, but I can share general NCI information, for example "
+                "how treatment types work (surgery, radiation, hormone therapy and others), what ER, PR and HER2 testing "
+                "means, or what BRCA genetic testing is. Questions for the care team are always worth writing down, and " +
+                CIS + " about what you're facing. What would you like to start with?"), \
+               [{"title": "National Cancer Institute, Breast Cancer Treatment (Patient Version)",
+                 "url": "https://www.cancer.gov/types/breast/patient/breast-treatment-pdq"}], "support"
+    if FEELING.search(q):
+        return ("That's an understandable way to feel, and I'm sorry you're dealing with it. I'm only a small information "
+                "bot, so I can't offer the support a person can. " + CIS + ", and your doctor or care team can too. "
+                "If it feels like too much right now, please reach out to someone you trust. If you'd like, I can also "
+                "explain something specific, like screening, mammogram results, or treatment types."), [], "support"
+    if OUT_OF_NOTES.search(q):
+        return ("The pages I have don't cover that, and I don't want to guess. It's a good question for your care team, "
+                "and " + CIS + ". I can help with " + HELP_TOPICS + "."), [], "declined"
+    if OFFFUN.search(q):
+        return ("That's outside what I can do. I only answer questions about breast cancer information from "
+                "National Cancer Institute pages, such as " + HELP_TOPICS + "."), [], "declined"
+    return None
+
+
 class Bot:
     def __init__(self, chunks=None):
         self.chunks = chunks or load_chunks()
@@ -121,6 +186,10 @@ class Bot:
         if re.search(r"\bhow (often|frequent\w*)\b|\bevery how\b", question, re.I):  # schedule questions
             for i, c in enumerate(self.chunks):
                 if re.search(r"\bevery\b.*\byears?\b", c["text"]):
+                    fused[i] += 0.03
+        if re.search(r"\b(hurt|hurts|pain|painful|uncomfortable)\b", question, re.I):  # comfort questions
+            for i, c in enumerate(self.chunks):
+                if re.search(r"compression", c["text"], re.I):
                     fused[i] += 0.03
         top = sorted(range(len(fused)), key=lambda j: -fused[j])[:k]
         self.best_tfidf = float(max(tfidf))
@@ -165,15 +234,26 @@ class Bot:
         if EMERGENCY.search(question):
             return {"answer": "If this is an emergency, call 911 (or your local emergency number) now. "
                               "I can't help with emergencies.", "sources": [], "mode": "emergency", "score": 0.0}
+        chat = chat_reply(question, history)
+        if chat:
+            return {"answer": chat[0], "sources": chat[1], "mode": chat[2], "score": 1.0}
+        if SYMPTOM.search(question):
+            doc = next(c for c in self.chunks if c["heading"] == "When to see a doctor")
+            return {"answer": "I can't give personal medical advice or tell you what a symptom means, and I'm sorry this is worrying. "
+                              "NCI says to contact your doctor if you notice any changes in your breasts. Here is what NCI says: " + doc["text"],
+                    "sources": [{"title": f"{doc['title']}: {doc['heading']}", "url": doc["url"]}], "mode": "extractive", "score": 1.0}
+        question = re.sub(r"\b(mutations?|variants?)\b", "harmful change", question, flags=re.I)  # NCI pages say "change"
         search_q = question
         if history and len(tokens(question)) <= 7 and FOLLOWUP.search(question):
             search_q = history[-1] + " " + question  # follow-up: reuse the last question's topic
         hits = self.retrieve(search_q, k)
         known = {w for w in tokens(" ".join(c["text"] + " " + c["heading"] for c in self.chunks))}
-        content = [w for w in tokens(search_q) if len(w) > 2]
+        known |= set(tokens(" ".join(SYNONYMS)))  # words the synonym table maps onto the notes
+        content = [w for w in tokens(search_q) if len(w) > 2 and w not in NEUTRAL]
         known_chars = sum(len(w) for w in content if w in known)
         coverage = known_chars / max(1, sum(len(w) for w in content))  # how much of the question the pages know
-        if self.best_tfidf < MIN_SCORE or coverage < 0.5:
+        unknown_long = [w for w in content if w not in known and len(w) >= 5]  # e.g. 'coffee', 'hair'
+        if self.best_tfidf < MIN_SCORE or coverage < 0.6 or (unknown_long and coverage < 0.85):
             return {"answer": "I couldn't find that in the NCI pages I have. I only cover breast "
                               "cancer screening, mammograms, risk, BRCA genes, treatment types, receptor "
                               "testing and breast changes. For anything else, please ask a doctor.",
@@ -188,6 +268,10 @@ class Bot:
         if PERSONAL.search(question) and re.search(r"lump|nipple|discharge|pain|swell|change|dimpl", question, re.I):
             bc = next(c for c in self.chunks if c["heading"] == "When to see a doctor")
             hits = [(bc, 1.0)] + [h for h in hits if h[0] is not bc]
+        if re.search(r"\btamoxifen\b", question, re.I):
+            answer = "My pages don't cover that specific drug, but here is what NCI says in general: " + answer
+        elif re.search(r"\b(men|man|male)\b", question, re.I) and not re.search(r"\\bmen\\b", answer, re.I):
+            answer = "The pages I have only mention men in the BRCA section. " + answer
         if PERSONAL.search(question):
             answer = ("I can't give personal medical advice. NCI says to contact your doctor if you notice "
                       "any changes in your breasts. Here is the general information: ") + answer

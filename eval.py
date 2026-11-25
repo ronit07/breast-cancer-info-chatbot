@@ -43,6 +43,13 @@ FOLLOWUPS = [  # (first question, follow-up, expected file, fact expected in the
 ]
 OFF_TOPIC = ["Who won the 2022 World Cup?", "How do I bake sourdough bread?", "What is the capital of France?",
              "Explain how photosynthesis works", "What is the best laptop for students?"]
+CHAT = [  # (message, expected mode, text expected in answer)
+    ("hi", "chat", "chatbot"), ("thanks!", "chat", "welcome"), ("who are you?", "chat", "not a person"),
+    ("I'm scared", "support", "sorry"), ("my mom was just diagnosed", "support", "sorry"),
+    ("tell me a joke", "declined", "outside"), ("does chemotherapy cause hair loss", "declined", "don't cover"),
+    ("What is a BRCA mutation?", "extractive", "BRCA"), ("how is it treated", "extractive", "surgery"),
+    ("explain HER2", "extractive", "HER2"), ("does a mammogram hurt", "extractive", "painful"),
+]
 EMERGENCY = ["I have chest pain and can't breathe"]
 PERSONAL = ["I found a lump in my breast, do I have cancer?"]
 
@@ -56,6 +63,7 @@ for q, f, word in CASES:
         print(f"{'ok  ' if ok else 'MISS'} retrieval | {'ok  ' if ok_kw else 'MISS'} fact | {q}")
 fu = sum(w.lower() in bot.ask(b, [a])["answer"].lower() for a, b, f, w in FOLLOWUPS)
 dec = sum(bot.ask(q)["mode"] == "declined" for q in OFF_TOPIC)
+chat_ok = sum((r := bot.ask(m))["mode"] == mode and t.lower() in r["answer"].lower() for m, mode, t in CHAT)
 emg = sum(bot.ask(q)["mode"] == "emergency" for q in EMERGENCY)
 per = sum(bot.ask(q)["answer"].startswith("I can't give personal medical advice") for q in PERSONAL)
 n = len(CASES)
@@ -63,5 +71,6 @@ print(f"\nRetrieval (right page in top 3): {hit}/{n}")
 print(f"Key fact in answer:              {kw}/{n}")
 print(f"Follow-ups routed correctly:     {fu}/{len(FOLLOWUPS)}")
 print(f"Off-topic declined:              {dec}/{len(OFF_TOPIC)}")
+print(f"Chat behavior (greeting, support, scope): {chat_ok}/{len(CHAT)}")
 print(f"Emergency wording handled:       {emg}/{len(EMERGENCY)}")
 print(f"Personal question gets doctor note: {per}/{len(PERSONAL)}")
